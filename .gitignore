@@ -1,0 +1,23 @@
+# secrets / local config
+.env
+
+# local warehouse + dbt artifacts
+warehouse.duckdb
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+logs/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# model cache (can be large)
+.cache/
+
+# editor / tooling
+.idea/
+.claude/
+.DS_Store

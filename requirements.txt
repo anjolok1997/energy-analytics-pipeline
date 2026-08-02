@@ -1,0 +1,24 @@
+# --- core pipeline (always needed) ---
+pandas>=2.0
+requests>=2.31
+SQLAlchemy>=2.0
+
+# --- warehouses ---
+duckdb>=1.0            # local dev warehouse
+duckdb-engine>=0.13    # SQLAlchemy dialect for DuckDB
+psycopg2-binary>=2.9   # Postgres driver (the "deployed" warehouse)
+
+# --- transformation ---
+dbt-core>=1.7
+dbt-duckdb>=1.7        # dev target
+dbt-postgres>=1.7      # prod target
+
+# --- AI enrichment (only needed for AI_BACKEND=local) ---
+# Kept here for convenience; comment out if you only ever use the
+# template / hf / claude backends.
+transformers>=4.40
+torch>=2.2
+
+# --- orchestration reference artifact (optional; see orchestration/) ---
+# dagster>=1.7
+# dagster-dbt>=0.23
