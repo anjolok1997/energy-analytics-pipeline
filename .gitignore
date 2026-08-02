@@ -21,3 +21,6 @@ venv/
 .idea/
 .claude/
 .DS_Store
+
+# dbt local user id
+dbt/.user.yml
