@@ -67,6 +67,10 @@ python ingest/ai_enrich.py
 Open http://localhost:3000, add the `energy` Postgres database (models are in the
 `analytics` schema), and build the dashboard.
 
+Or skip the clicking — `make dashboard` runs all of the above and provisions the
+Metabase dashboard automatically via its API. See [`dashboard/README.md`](dashboard/README.md)
+for the quick-start and the four tiles it builds.
+
 ### Dashboard tiles
 
 - Top electricity consumers — bar, `mart_latest_snapshot`, country × `electricity_demand_twh`, top 10
