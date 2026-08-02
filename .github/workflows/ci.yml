@@ -1,0 +1,36 @@
+# Build the pipeline on DuckDB and run the dbt tests on every push / PR.
+# A failing test fails the build.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (core only)
+        run: |
+          pip install pandas requests SQLAlchemy duckdb duckdb-engine \
+                      dbt-core dbt-duckdb
+
+      - name: Ingest
+        run: python ingest/load_energy_data.py
+
+      - name: dbt build + tests
+        working-directory: dbt
+        run: dbt build --profiles-dir .
+
+      - name: Enrich (template backend, no model download)
+        env:
+          AI_BACKEND: template
+        run: python ingest/ai_enrich.py

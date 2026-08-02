@@ -1,0 +1,32 @@
+# Re-run the pipeline weekly on a cron (and on demand). Runs on the free tier,
+# so the data stays current without a hosted orchestrator.
+
+name: scheduled-refresh
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"      # 06:00 UTC Mondays
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (core only)
+        run: |
+          pip install pandas requests SQLAlchemy duckdb duckdb-engine \
+                      dbt-core dbt-duckdb
+
+      - name: Run pipeline
+        env:
+          AI_BACKEND: template
+        run: |
+          python ingest/load_energy_data.py
+          cd dbt && dbt build --profiles-dir . && cd ..
+          python ingest/ai_enrich.py
