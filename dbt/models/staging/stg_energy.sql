@@ -12,19 +12,20 @@ cleaned as (
         country,
         iso_code,
         cast(year as integer)                          as year,
-        cast(population as double)                      as population,
-        cast(gdp as double)                            as gdp,
-        cast(electricity_generation as double)         as electricity_generation_twh,
-        cast(electricity_demand as double)             as electricity_demand_twh,
-        cast(electricity_demand_per_capita as double)  as electricity_demand_per_capita_kwh,
-        cast(energy_per_capita as double)              as energy_per_capita_kwh,
-        cast(energy_per_gdp as double)                 as energy_intensity_kwh_per_dollar,
-        cast(greenhouse_gas_emissions as double)       as electricity_emissions_mtco2e,
-        cast(renewables_share_energy as double)        as renewables_share_pct,
-        cast(low_carbon_share_energy as double)        as low_carbon_share_pct,
-        cast(fossil_share_energy as double)            as fossil_share_pct,
-        cast(solar_share_energy as double)             as solar_share_pct,
-        cast(wind_share_energy as double)              as wind_share_pct
+        -- dbt.type_float() -> DOUBLE on DuckDB, float8 on Postgres, FLOAT64 on BigQuery
+        cast(population as {{ dbt.type_float() }})                      as population,
+        cast(gdp as {{ dbt.type_float() }})                            as gdp,
+        cast(electricity_generation as {{ dbt.type_float() }})         as electricity_generation_twh,
+        cast(electricity_demand as {{ dbt.type_float() }})             as electricity_demand_twh,
+        cast(electricity_demand_per_capita as {{ dbt.type_float() }})  as electricity_demand_per_capita_kwh,
+        cast(energy_per_capita as {{ dbt.type_float() }})              as energy_per_capita_kwh,
+        cast(energy_per_gdp as {{ dbt.type_float() }})                 as energy_intensity_kwh_per_dollar,
+        cast(greenhouse_gas_emissions as {{ dbt.type_float() }})       as electricity_emissions_mtco2e,
+        cast(renewables_share_energy as {{ dbt.type_float() }})        as renewables_share_pct,
+        cast(low_carbon_share_energy as {{ dbt.type_float() }})        as low_carbon_share_pct,
+        cast(fossil_share_energy as {{ dbt.type_float() }})            as fossil_share_pct,
+        cast(solar_share_energy as {{ dbt.type_float() }})             as solar_share_pct,
+        cast(wind_share_energy as {{ dbt.type_float() }})              as wind_share_pct
     from source
     -- keep only real countries (3-letter ISO code), drop aggregates
     where iso_code is not null
