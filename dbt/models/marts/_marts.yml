@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: dim_country
+    description: "One row per country with most recent population and GDP."
+    columns:
+      - name: iso_code
+        description: "3-letter ISO country code (primary key)."
+        data_tests:
+          - not_null
+          - unique
+
+  - name: fct_country_energy
+    description: "Energy measures at country-year grain."
+    columns:
+      - name: energy_key
+        data_tests:
+          - not_null
+          - unique
+      - name: iso_code
+        description: "FK to dim_country."
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_country')
+              field: iso_code
+
+  - name: mart_renewables_transition
+    description: "Country-year generation-mix shares from 2000 onward for trend charts."
+
+  - name: mart_latest_snapshot
+    description: "Latest reported year per country for ranking and comparison tiles."
+    columns:
+      - name: iso_code
+        data_tests:
+          - not_null
+          - unique

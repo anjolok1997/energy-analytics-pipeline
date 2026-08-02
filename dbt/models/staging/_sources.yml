@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Landing zone for data loaded by the Python ingestion step."
+    # The raw table lives in the default schema, which is named differently on
+    # DuckDB ('main') vs Postgres ('public'). Resolve it per target.
+    schema: "{{ 'main' if target.type == 'duckdb' else 'public' }}"
+    tables:
+      - name: raw_energy
+        description: "Curated subset of the OWID global energy dataset (country x year)."
+        columns:
+          - name: country
+            description: "Entity name. Includes non-country aggregates (e.g. 'World', 'ASEAN (Ember)') that staging filters out."
+          - name: year
+            description: "Calendar year of observation."

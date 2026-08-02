@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: stg_energy
+    description: "Cleaned, typed, country-only energy observations at country-year grain."
+    columns:
+      - name: energy_key
+        description: "Surrogate key: iso_code + year."
+        data_tests:
+          - not_null
+          - unique
+      - name: iso_code
+        data_tests:
+          - not_null
+      - name: year
+        data_tests:
+          - not_null
