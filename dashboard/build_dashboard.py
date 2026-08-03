@@ -1,25 +1,34 @@
 """
-Provision the Metabase dashboard from scratch via the Metabase REST API.
+Provision the Metabase dashboards from scratch via the Metabase REST API.
 
-Idempotent-ish: on a fresh Metabase it runs first-time setup (creating the admin
-user below), connects the Postgres warehouse, and builds the four dashboard tiles
-described in the README. Re-running against an already-set-up Metabase logs in
-with the same credentials and rebuilds the cards + dashboard.
+Builds two dashboards, each tile answering one plain question:
+
+  Overview — "Global electricity & the shift to renewables"
+    * Who's decarbonising fastest   (leaderboard: renewables growth since 2000)
+    * Biggest electricity consumers
+    * Renewables share over time
+    * Country narratives
+
+  Country deep-dive — pick a country from a dropdown and see:
+    * where it stands (the narrative)
+    * its renewables-vs-fossil transition over time
+    * its leaderboard rank and change
+
+Idempotent-ish: on a fresh Metabase it runs first-time admin setup; otherwise it
+logs in, re-syncs the warehouse, archives previously built dashboards/cards, and
+rebuilds. Run after the pipeline has loaded the Postgres warehouse.
 
     python dashboard/build_dashboard.py
 
-Env (all optional, sensible defaults for the local docker-compose stack):
-    MB_URL            Metabase base URL           (http://localhost:3000)
-    MB_EMAIL          admin email to create/login (admin@energy.local)
-    MB_PASSWORD       admin password              (energy-admin-1)
-    PG_HOST           Postgres host as seen by Metabase (energy-postgres)
-    PG_PORT/PG_DB/PG_USER/PG_PASSWORD  warehouse connection
+Env (all optional, defaults match the local docker stack): MB_URL, MB_EMAIL,
+MB_PASSWORD, PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASSWORD.
 """
 from __future__ import annotations
 
 import os
 import sys
 import time
+import uuid
 
 import requests
 
@@ -36,10 +45,16 @@ PG = {
 }
 
 ANALYTICS = "analytics"   # dbt marts schema
-PUBLIC = "public"         # raw + ai briefings
+PUBLIC = "public"         # raw + narratives
+DEFAULT_COUNTRY = "Germany"
+
+REQUIRED_TABLES = {
+    "mart_latest_snapshot", "mart_renewables_transition",
+    "mart_decarbonization_leaderboard", "ai_country_briefings",
+}
 
 
-def api(session: requests.Session, method: str, path: str, **kw):
+def api(session, method, path, **kw):
     r = session.request(method, f"{MB_URL}/api{path}", timeout=60, **kw)
     if not r.ok:
         raise RuntimeError(f"{method} {path} -> {r.status_code}: {r.text[:400]}")
@@ -57,70 +72,110 @@ def wait_healthy():
     sys.exit("Metabase never became healthy at " + MB_URL)
 
 
-def authenticate(session: requests.Session) -> None:
+def authenticate(session):
     props = requests.get(f"{MB_URL}/api/session/properties", timeout=30).json()
     token = props.get("setup-token")
     if token:
         print("[mb] first-time setup: creating admin user")
         res = api(session, "POST", "/setup", json={
             "token": token,
-            "user": {
-                "first_name": "Energy", "last_name": "Admin",
-                "email": MB_EMAIL, "password": MB_PASSWORD, "site_name": "Energy Analytics",
-            },
+            "user": {"first_name": "Energy", "last_name": "Admin",
+                     "email": MB_EMAIL, "password": MB_PASSWORD, "site_name": "Energy Analytics"},
             "prefs": {"site_name": "Energy Analytics", "allow_tracking": False},
         })
-        session.headers["X-Metabase-Session"] = res["id"]
     else:
-        print("[mb] already set up: logging in")
+        print("[mb] logging in")
         res = api(session, "POST", "/session", json={"username": MB_EMAIL, "password": MB_PASSWORD})
-        session.headers["X-Metabase-Session"] = res["id"]
+    session.headers["X-Metabase-Session"] = res["id"]
 
 
-def connect_warehouse(session: requests.Session) -> int:
-    existing = api(session, "GET", "/database")
-    dbs = existing.get("data", existing) if isinstance(existing, dict) else existing
-    for db in dbs:
-        if db.get("name") == "Energy warehouse":
-            print(f"[mb] warehouse already connected (id={db['id']})")
-            return db["id"]
-    print("[mb] connecting Postgres warehouse")
-    db = api(session, "POST", "/database", json={
-        "engine": "postgres",
-        "name": "Energy warehouse",
-        "details": {
-            "host": PG["host"], "port": PG["port"], "dbname": PG["dbname"],
-            "user": PG["user"], "password": PG["password"], "ssl": False,
-        },
-    })
-    db_id = db["id"]
+def connect_warehouse(session) -> int:
+    dbs = api(session, "GET", "/database")
+    dbs = dbs.get("data", dbs) if isinstance(dbs, dict) else dbs
+    db_id = next((d["id"] for d in dbs if d.get("name") == "Energy warehouse"), None)
+    if db_id is None:
+        print("[mb] connecting Postgres warehouse")
+        db_id = api(session, "POST", "/database", json={
+            "engine": "postgres", "name": "Energy warehouse",
+            "details": {"host": PG["host"], "port": PG["port"], "dbname": PG["dbname"],
+                        "user": PG["user"], "password": PG["password"], "ssl": False},
+        })["id"]
+    print("[mb] syncing warehouse schema")
     api(session, "POST", f"/database/{db_id}/sync_schema")
-    # wait for tables to appear so native queries resolve schemas
-    for _ in range(30):
+    for _ in range(40):
         meta = api(session, "GET", f"/database/{db_id}/metadata")
         names = {t["name"] for t in meta.get("tables", [])}
-        if {"mart_latest_snapshot", "ai_country_briefings"} <= names:
-            break
+        if REQUIRED_TABLES <= names:
+            return db_id, meta
         time.sleep(2)
-    return db_id
+    sys.exit("warehouse tables never synced into Metabase")
 
 
-def make_card(session, db_id, name, sql, display, viz=None):
+def field_map(meta) -> dict:
+    """(schema, table, column) -> field id"""
+    out = {}
+    for t in meta["tables"]:
+        for f in t["fields"]:
+            out[(t["schema"], t["name"], f["name"])] = f["id"]
+    return out
+
+
+def archive_previous(session):
+    """Archive dashboards/cards from earlier runs so we rebuild cleanly."""
+    for coll in ("/dashboard", "/card"):
+        items = api(session, "GET", coll)
+        items = items.get("data", items) if isinstance(items, dict) else items
+        for it in items:
+            if it.get("name", "").startswith(("Global electricity", "Country deep-dive",
+                                              "Global Energy Analytics")) or \
+               it.get("name") in CARD_NAMES:
+                try:
+                    api(session, "PUT", f"{coll}/{it['id']}", json={"archived": True})
+                except Exception:
+                    pass
+
+
+CARD_NAMES = set()
+
+
+def make_card(session, db_id, name, sql, display, viz=None, template_tags=None):
+    CARD_NAMES.add(name)
+    native = {"query": sql}
+    if template_tags:
+        native["template-tags"] = template_tags
     card = api(session, "POST", "/card", json={
-        "name": name,
-        "display": display,
-        "dataset_query": {"type": "native", "native": {"query": sql}, "database": db_id},
+        "name": name, "display": display,
+        "dataset_query": {"type": "native", "native": native, "database": db_id},
         "visualization_settings": viz or {},
     })
     print(f"[mb]   card: {name} (id={card['id']})")
     return card["id"]
 
 
-def build_cards(session, db_id) -> list[dict]:
+def country_tag(field_id):
+    return {"country": {
+        "id": str(uuid.uuid4()), "name": "country", "display-name": "Country",
+        "type": "dimension", "dimension": ["field", field_id, None],
+        "widget-type": "string/=",
+    }}
+
+
+# ---------------------------------------------------------------- overview ----
+
+def build_overview(session, db_id):
     cards = []
+    cards.append({"id": make_card(
+        session, db_id, "Who's decarbonising fastest (renewables growth since 2000)",
+        f"""select country, renewables_change_pts as change_in_renewables_pts
+            from {ANALYTICS}.mart_decarbonization_leaderboard
+            order by rank_fastest
+            limit 15""",
+        "bar",
+        {"graph.dimensions": ["country"], "graph.metrics": ["change_in_renewables_pts"]},
+    ), "row": 0, "col": 0, "size_x": 12, "size_y": 8})
 
     cards.append({"id": make_card(
-        session, db_id, "Top electricity consumers (latest year)",
+        session, db_id, "Biggest electricity consumers (latest year)",
         f"""select country, round(electricity_demand_twh) as demand_twh
             from {ANALYTICS}.mart_latest_snapshot
             where electricity_demand_twh is not null
@@ -128,71 +183,116 @@ def build_cards(session, db_id) -> list[dict]:
             limit 10""",
         "bar",
         {"graph.dimensions": ["country"], "graph.metrics": ["demand_twh"]},
-    ), "row": 0, "col": 0, "size_x": 12, "size_y": 7})
+    ), "row": 0, "col": 12, "size_x": 12, "size_y": 8})
 
     cards.append({"id": make_card(
         session, db_id, "Renewables share of energy over time",
-        f"""select year, country, round(renewables_share_pct::numeric, 1) as renewables_share_pct
+        f"""select year, country, round(cast(renewables_share_pct as numeric), 1) as renewables_share_pct
             from {ANALYTICS}.mart_renewables_transition
-            where country in ('China','United States','Germany','Brazil','India','United Kingdom')
+            where country in ('Denmark','Germany','United Kingdom','China','United States','India')
             order by year""",
         "line",
         {"graph.dimensions": ["year", "country"], "graph.metrics": ["renewables_share_pct"]},
-    ), "row": 0, "col": 12, "size_x": 12, "size_y": 7})
+    ), "row": 8, "col": 0, "size_x": 12, "size_y": 8})
 
     cards.append({"id": make_card(
-        session, db_id, "Renewables share vs electricity emissions",
-        f"""select country,
-                   round(renewables_share_pct::numeric, 1) as renewables_share_pct,
-                   round(electricity_emissions_mtco2e)      as emissions_mtco2e,
-                   round(electricity_demand_twh)            as demand_twh
-            from {ANALYTICS}.mart_latest_snapshot
-            where renewables_share_pct is not null
-              and electricity_emissions_mtco2e is not null""",
-        "scatter",
-        {"graph.dimensions": ["renewables_share_pct"],
-         "graph.metrics": ["emissions_mtco2e"],
-         "scatter.bubble": "demand_twh"},
-    ), "row": 7, "col": 0, "size_x": 12, "size_y": 7})
-
-    cards.append({"id": make_card(
-        session, db_id, "AI country briefings",
-        f"""select country, snapshot_year, briefing
+        session, db_id, "Country narratives",
+        f"""select country, briefing
             from {PUBLIC}.ai_country_briefings
             order by snapshot_year desc, country""",
         "table",
-    ), "row": 7, "col": 12, "size_x": 12, "size_y": 7})
+    ), "row": 8, "col": 12, "size_x": 12, "size_y": 8})
 
-    return cards
-
-
-def build_dashboard(session, cards) -> int:
     dash = api(session, "POST", "/dashboard", json={
-        "name": "Global Energy Analytics",
-        "description": "Electricity demand, the renewables transition, and AI briefings "
-                       "by country. Built from the OWID energy dataset via dbt.",
+        "name": "Global electricity & the shift to renewables",
+        "description": "Which countries are moving to renewables the fastest, who uses "
+                       "the most power, and how the mix has changed — from the OWID energy "
+                       "dataset via dbt.",
+    })["id"]
+    api(session, "PUT", f"/dashboard/{dash}", json={"dashcards": [
+        {"id": -(i + 1), "card_id": c["id"], "row": c["row"], "col": c["col"],
+         "size_x": c["size_x"], "size_y": c["size_y"],
+         "parameter_mappings": [], "visualization_settings": {}}
+        for i, c in enumerate(cards)]})
+    print(f"[mb] overview dashboard built (id={dash})")
+    return dash
+
+
+# --------------------------------------------------------------- deep-dive ----
+
+def build_country_detail(session, db_id, fmap):
+    pid = uuid.uuid4().hex[:8]
+    cards = []
+
+    cards.append({"card_id": make_card(
+        session, db_id, "Where this country stands",
+        f"""select briefing
+            from {PUBLIC}.ai_country_briefings
+            where 1=1 [[ and {{{{country}}}} ]]""",
+        "table",
+        template_tags=country_tag(fmap[(PUBLIC, "ai_country_briefings", "country")]),
+    ), "row": 0, "col": 0, "size_x": 24, "size_y": 3})
+
+    cards.append({"card_id": make_card(
+        session, db_id, "Renewables vs fossil over time",
+        f"""select year,
+                   round(cast(renewables_share_pct as numeric), 1) as renewables_pct,
+                   round(cast(fossil_share_pct as numeric), 1)     as fossil_pct
+            from {ANALYTICS}.mart_renewables_transition
+            where 1=1 [[ and {{{{country}}}} ]]
+            order by year""",
+        "line",
+        {"graph.dimensions": ["year"], "graph.metrics": ["renewables_pct", "fossil_pct"]},
+        template_tags=country_tag(fmap[(ANALYTICS, "mart_renewables_transition", "country")]),
+    ), "row": 3, "col": 0, "size_x": 14, "size_y": 8})
+
+    cards.append({"card_id": make_card(
+        session, db_id, "Decarbonisation rank & change",
+        f"""select rank_fastest        as global_rank,
+                   countries_ranked     as of_countries,
+                   renewables_share_2000 as renewables_2000_pct,
+                   renewables_share_latest as renewables_now_pct,
+                   renewables_change_pts   as change_pts
+            from {ANALYTICS}.mart_decarbonization_leaderboard
+            where 1=1 [[ and {{{{country}}}} ]]""",
+        "table",
+        template_tags=country_tag(fmap[(ANALYTICS, "mart_decarbonization_leaderboard", "country")]),
+    ), "row": 3, "col": 14, "size_x": 10, "size_y": 8})
+
+    dash = api(session, "POST", "/dashboard", json={
+        "name": "Country deep-dive",
+        "description": "Pick a country to see where it stands on the renewables shift, its "
+                       "transition over time, and its leaderboard rank.",
+    })["id"]
+    api(session, "PUT", f"/dashboard/{dash}", json={
+        "parameters": [{"id": pid, "name": "Country", "slug": "country",
+                        "type": "string/=", "sectionId": "string",
+                        "default": [DEFAULT_COUNTRY]}],
+        "dashcards": [
+            {"id": -(i + 1), "card_id": c["card_id"], "row": c["row"], "col": c["col"],
+             "size_x": c["size_x"], "size_y": c["size_y"],
+             "parameter_mappings": [{"parameter_id": pid, "card_id": c["card_id"],
+                                     "target": ["dimension", ["template-tag", "country"]]}],
+             "visualization_settings": {}}
+            for i, c in enumerate(cards)],
     })
-    dash_id = dash["id"]
-    dashcards = [{
-        "id": -(i + 1), "card_id": c["id"],
-        "row": c["row"], "col": c["col"], "size_x": c["size_x"], "size_y": c["size_y"],
-        "parameter_mappings": [], "visualization_settings": {},
-    } for i, c in enumerate(cards)]
-    api(session, "PUT", f"/dashboard/{dash_id}", json={"dashcards": dashcards})
-    print(f"[mb] dashboard built (id={dash_id})")
-    return dash_id
+    print(f"[mb] country deep-dive built (id={dash})")
+    return dash
 
 
 def main() -> int:
     wait_healthy()
-    session = requests.Session()
-    authenticate(session)
-    db_id = connect_warehouse(session)
-    cards = build_cards(session, db_id)
-    dash_id = build_dashboard(session, cards)
+    s = requests.Session()
+    authenticate(s)
+    db_id, meta = connect_warehouse(s)
+    fmap = field_map(meta)
+    archive_previous(s)
+    overview = build_overview(s, db_id)
+    detail = build_country_detail(s, db_id, fmap)
     print("\n" + "=" * 60)
-    print(f"Dashboard ready:  {MB_URL}/dashboard/{dash_id}")
-    print(f"Log in with:      {MB_EMAIL} / {MB_PASSWORD}")
+    print(f"Overview:    {MB_URL}/dashboard/{overview}")
+    print(f"Deep-dive:   {MB_URL}/dashboard/{detail}")
+    print(f"Log in with: {MB_EMAIL} / {MB_PASSWORD}")
     print("=" * 60)
     return 0
 

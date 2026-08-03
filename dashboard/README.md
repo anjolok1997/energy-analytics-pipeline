@@ -1,12 +1,20 @@
 # Dashboard
 
-A four-tile Metabase dashboard on the energy marts: top electricity consumers,
-the renewables transition over time, renewables vs emissions, and the AI
-country briefings.
+Two Metabase dashboards on the energy marts:
 
-`build_dashboard.py` provisions the whole thing through the Metabase REST API —
-first-time admin setup, the Postgres connection, the four cards, and the
-dashboard layout — so there's nothing to click through by hand.
+- **Global electricity & the shift to renewables** — who's decarbonising fastest
+  (the leaderboard), the biggest electricity consumers, renewables share over time,
+  and the per-country briefings.
+- **Country deep-dive** — pick a country from a dropdown to see its plain-English
+  read, its renewables-vs-fossil transition over time, and its leaderboard rank.
+
+`build_dashboard.py` provisions both through the Metabase REST API — first-time
+admin setup, the Postgres connection, every card, the country filter, and the
+dashboard layouts — so there's nothing to click through by hand.
+
+There's also `hero_chart.py`, which renders a static PNG of the leaderboard
+(`decarbonization_leaderboard.png`) that the top-level README embeds — no
+Metabase needed to see the headline result.
 
 ## Quick start
 
@@ -17,8 +25,9 @@ make dashboard
 ```
 
 That brings up Postgres + Metabase, loads the warehouse, builds the dbt models
-on the `prod` (Postgres) target, generates the briefings, and provisions the
-dashboard. When it finishes it prints a URL like `http://localhost:3000/dashboard/1`.
+on the `prod` (Postgres) target, generates the briefings, renders the hero chart,
+and provisions both dashboards. When it finishes it prints their URLs, like
+`http://localhost:3000/dashboard/1`.
 
 Log in with the credentials it prints (default `admin@energy.local` /
 `energy-admin-1`), open the dashboard, and you're done.
@@ -51,9 +60,19 @@ All optional — defaults match the local `docker-compose` stack:
 
 ## Tiles
 
+**Global electricity & the shift to renewables**
+
 | Tile | Type | Source |
 |---|---|---|
-| Top electricity consumers | bar | `mart_latest_snapshot` |
+| Who's decarbonising fastest | bar | `mart_decarbonization_leaderboard` |
+| Biggest electricity consumers | bar | `mart_latest_snapshot` |
 | Renewables share over time | line | `mart_renewables_transition` |
-| Renewables vs emissions | scatter | `mart_latest_snapshot` |
-| AI country briefings | table | `ai_country_briefings` |
+| Country narratives | table | `ai_country_briefings` |
+
+**Country deep-dive** (driven by a `Country` dropdown parameter)
+
+| Tile | Type | Source |
+|---|---|---|
+| Where this country stands | table | `ai_country_briefings` |
+| Renewables vs fossil over time | line | `mart_renewables_transition` |
+| Decarbonisation rank & change | table | `mart_decarbonization_leaderboard` |

@@ -35,3 +35,16 @@ models:
         data_tests:
           - not_null
           - unique
+
+  - name: mart_decarbonization_leaderboard
+    description: "Countries ranked by growth in renewables' share of energy since 2000."
+    columns:
+      - name: iso_code
+        data_tests:
+          - not_null
+          - unique
+      - name: rank_fastest
+        description: "1 = biggest increase in renewables share since 2000."
+        data_tests:
+          - not_null
+          - unique
