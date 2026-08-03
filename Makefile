@@ -1,17 +1,20 @@
 # Convenience commands. Run `make help` to list them.
 # Local dev uses DuckDB (no Docker). `make deploy-*` targets use Postgres.
 
-.PHONY: help install ingest transform enrich pipeline dashboard-up dashboard-down clean
+.PHONY: help install ingest transform enrich hero pipeline dashboard-up dashboard-down dashboard-build dashboard clean
 
 help:
-	@echo "install        Install Python dependencies"
-	@echo "pipeline       Run the full local pipeline (ingest -> dbt -> AI) on DuckDB"
-	@echo "ingest         Load the OWID dataset into the warehouse"
-	@echo "transform      Run dbt build (models + tests)"
-	@echo "enrich         Run the AI enrichment step"
-	@echo "dashboard-up   Start Postgres + Metabase (docker compose)"
-	@echo "dashboard-down Stop Postgres + Metabase"
-	@echo "clean          Remove the local DuckDB file and dbt artifacts"
+	@echo "install          Install Python dependencies"
+	@echo "pipeline         Run the full local pipeline (ingest -> dbt -> AI) on DuckDB"
+	@echo "ingest           Load the OWID dataset into the warehouse"
+	@echo "transform        Run dbt build (models + tests)"
+	@echo "enrich           Run the AI enrichment step"
+	@echo "hero             Render the leaderboard hero chart (PNG the README embeds)"
+	@echo "dashboard-up     Start Postgres + Metabase (docker compose)"
+	@echo "dashboard-down   Stop Postgres + Metabase"
+	@echo "dashboard-build  Provision the Metabase dashboard via its API"
+	@echo "dashboard        Plug-and-play: containers -> load Postgres -> build dashboard"
+	@echo "clean            Remove the local DuckDB file and dbt artifacts"
 
 install:
 	pip install -r requirements.txt
@@ -25,8 +28,11 @@ transform:
 enrich:
 	python ingest/ai_enrich.py
 
+hero:
+	python dashboard/hero_chart.py
+
 # One command, full local run.
-pipeline: ingest transform enrich
+pipeline: ingest transform enrich hero
 	@echo "Pipeline complete. Warehouse: warehouse.duckdb"
 
 dashboard-up:
@@ -35,6 +41,21 @@ dashboard-up:
 
 dashboard-down:
 	docker compose down
+
+dashboard-build:
+	python dashboard/build_dashboard.py
+
+# Plug-and-play: bring up the stack, load the Postgres warehouse, build the dashboard.
+# Assumes WAREHOUSE_URL / POSTGRES_* point at the compose Postgres (see .env.example).
+dashboard: dashboard-up
+	@echo "Waiting for Postgres..."
+	@until docker exec energy-postgres pg_isready -U energy >/dev/null 2>&1 || \
+	       pg_isready -h localhost -U energy >/dev/null 2>&1; do sleep 2; done
+	python ingest/load_energy_data.py
+	cd dbt && dbt build --profiles-dir . --target prod && cd ..
+	python ingest/ai_enrich.py
+	python dashboard/hero_chart.py
+	python dashboard/build_dashboard.py
 
 clean:
 	rm -f warehouse.duckdb

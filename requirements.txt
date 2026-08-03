@@ -8,6 +8,9 @@ duckdb>=1.0            # local dev warehouse
 duckdb-engine>=0.13    # SQLAlchemy dialect for DuckDB
 psycopg2-binary>=2.9   # Postgres driver (the "deployed" warehouse)
 
+# --- hero chart (static PNG the README embeds) ---
+matplotlib>=3.8
+
 # --- transformation ---
 dbt-core>=1.7
 dbt-duckdb>=1.7        # dev target

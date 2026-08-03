@@ -1,15 +1,19 @@
 """
-Generate a short text briefing per country from the marts and write them back to
-the warehouse (ai_country_briefings) so the dashboard can show text next to the
-numbers.
+Write a short natural-language narrative per country that reports its result on
+the decarbonisation leaderboard (mart_decarbonization_leaderboard) alongside its
+latest snapshot, and store it back in the warehouse (ai_country_briefings) so the
+dashboard can show a plain-English read next to the numbers.
 
-    marts -> model -> ai_country_briefings + ai_output/sample_briefings.md
+    marts -> narrative -> ai_country_briefings + ai_output/sample_briefings.md
+
+The leaderboard (a tested dbt model) does the analysis -- rank each country by how
+much its renewables share grew since 2000. This step just phrases that result.
 
 AI_BACKEND picks the generator:
     local     flan-t5 via transformers, runs offline on CPU (default)
     hf        Hugging Face inference API (needs HF_TOKEN)
     claude    Anthropic API (needs ANTHROPIC_API_KEY)
-    template  no model, just formats the facts; used in CI and for the sample
+    template  no model, just phrases the facts; used in CI and for the sample
 """
 from __future__ import annotations
 
@@ -33,51 +37,63 @@ def load_facts(engine):
     schema = "main" if engine.url.get_backend_name() == "duckdb" else "analytics"
     snapshot = pd.read_sql(
         f"""
-        select country, snapshot_year, electricity_demand_twh,
-               renewables_share_pct, fossil_share_pct, electricity_emissions_mtco2e
+        select iso_code, country, snapshot_year, electricity_demand_twh,
+               renewables_share_pct, fossil_share_pct
         from {schema}.mart_latest_snapshot
         order by electricity_demand_twh desc
         limit {TOP_N}
         """,
         engine,
     )
-    trend = pd.read_sql(
+    board = pd.read_sql(
         f"""
-        select country, year, renewables_share_pct
-        from {schema}.mart_renewables_transition
-        where year = 2000
+        select iso_code, rank_fastest, countries_ranked,
+               renewables_share_2000, renewables_share_latest, renewables_change_pts
+        from {schema}.mart_decarbonization_leaderboard
         """,
         engine,
     )
-    return snapshot, trend
+    return snapshot, board
 
 
-def build_context(row: pd.Series, trend: pd.DataFrame) -> dict:
-    hist = trend[trend["country"] == row["country"]].set_index("year")["renewables_share_pct"]
-    return {
+def build_context(row: pd.Series, board: pd.DataFrame) -> dict:
+    match = board[board["iso_code"] == row["iso_code"]]
+    ctx = {
         "country": row["country"],
         "year": int(row["snapshot_year"]),
         "demand_twh": float(row["electricity_demand_twh"]),
         "fossil_pct": float(row["fossil_share_pct"]),
         "renew_now": float(row["renewables_share_pct"]),
-        "renew_2000": float(hist.get(2000)) if 2000 in hist.index else None,
+        "rank": None,
     }
+    if not match.empty:
+        b = match.iloc[0]
+        ctx.update({
+            "rank": int(b["rank_fastest"]),
+            "countries": int(b["countries_ranked"]),
+            "renew_2000": float(b["renewables_share_2000"]),
+            "change_pts": float(b["renewables_change_pts"]),
+        })
+    return ctx
 
 
 def make_prompt(ctx: dict) -> str:
-    if ctx["renew_2000"] is not None:
-        change = (
-            f"renewables' share of energy rose from {ctx['renew_2000']:.1f}% in 2000 "
-            f"to {ctx['renew_now']:.1f}% in {ctx['year']}"
+    if ctx["rank"] is not None:
+        facts = (
+            f"It ranks {ctx['rank']} of {ctx['countries']} countries for growth in "
+            f"renewables since 2000: renewables' share of energy went from "
+            f"{ctx['renew_2000']:.1f}% in 2000 to {ctx['renew_now']:.1f}% in {ctx['year']} "
+            f"({ctx['change_pts']:+.1f} points). It used {ctx['demand_twh']:.0f} TWh of "
+            f"electricity in {ctx['year']}, currently {ctx['fossil_pct']:.0f}% fossil."
         )
     else:
-        change = f"renewables make up {ctx['renew_now']:.1f}% of energy in {ctx['year']}"
+        facts = (
+            f"In {ctx['year']} it used {ctx['demand_twh']:.0f} TWh of electricity; "
+            f"renewables are {ctx['renew_now']:.1f}% of energy, fossil {ctx['fossil_pct']:.0f}%."
+        )
     return (
-        f"Write a concise two-sentence briefing on {ctx['country']}'s electricity system "
-        f"for a data-centre industry audience. Facts: electricity demand "
-        f"{ctx['demand_twh']:.0f} TWh; fossil fuels {ctx['fossil_pct']:.1f}% of energy; "
-        f"{change}. Mention what the fossil/renewable mix implies for large power "
-        f"consumers like data centres."
+        f"Write a plain-English two-sentence read on how {ctx['country']} is doing in "
+        f"the shift to renewable energy, for a general audience. Facts: {facts}"
     )
 
 
@@ -128,40 +144,47 @@ def _claude(prompt: str) -> str:
 
 
 def _template(ctx: dict) -> str:
-    # No model: build the sentence straight from the numbers. Deterministic, so
-    # it's what CI runs and what the committed sample uses.
-    if ctx["fossil_pct"] >= 60:
-        grid = f"a fossil-heavy grid ({ctx['fossil_pct']:.0f}% fossil, {ctx['renew_now']:.0f}% renewables)"
-        implication = "meaningful exposure to fossil generation and carbon-intensive power for large consumers such as data centres"
-    elif ctx["renew_now"] >= 40:
-        grid = f"a notably clean grid ({ctx['renew_now']:.0f}% renewables)"
-        implication = "ample low-carbon headroom for power-hungry infrastructure such as data centres"
+    # No model: phrase the leaderboard result straight from the numbers.
+    # Deterministic, so it's what CI runs and what the committed sample uses.
+    if ctx["rank"] is None:
+        return (
+            f"{ctx['country']} used about {ctx['demand_twh']:,.0f} TWh of electricity in "
+            f"{ctx['year']}, currently {ctx['renew_now']:.0f}% renewables and "
+            f"{ctx['fossil_pct']:.0f}% fossil. (No 2000 baseline, so it isn't ranked.)"
+        )
+    chg = ctx["change_pts"]
+    if chg >= 20:
+        pace = "a rapid shift to renewables"
+    elif chg >= 8:
+        pace = "a steady shift toward renewables"
+    elif chg > 0:
+        pace = "only a slow shift toward renewables"
     else:
-        grid = f"a transitioning grid ({ctx['fossil_pct']:.0f}% fossil, {ctx['renew_now']:.0f}% renewables)"
-        implication = "a mixed carbon profile for large power consumers such as data centres"
-    trend = (
-        f" up from {ctx['renew_2000']:.0f}% renewables in 2000"
-        if ctx["renew_2000"] is not None
-        else ""
-    )
+        pace = "essentially no shift toward renewables"
+    top = ctx["rank"] <= ctx["countries"] * 0.25
+    standing = "near the top of" if top else "in the middle of" if ctx["rank"] <= ctx["countries"] * 0.6 else "near the bottom of"
+    change_str = "roughly flat" if abs(chg) < 0.5 else f"{chg:+.0f} points"
     return (
-        f"{ctx['country']} drew about {ctx['demand_twh']:,.0f} TWh of electricity in "
-        f"{ctx['year']}, on {grid}{trend}. That implies {implication}."
+        f"{ctx['country']} ranks {ctx['rank']} of {ctx['countries']} for growth in renewable "
+        f"energy since 2000 — {standing} the pack, with {pace}. Renewables went from "
+        f"{ctx['renew_2000']:.0f}% to {ctx['renew_now']:.0f}% of its energy "
+        f"({change_str}), while it used {ctx['demand_twh']:,.0f} TWh of electricity in "
+        f"{ctx['year']} ({ctx['fossil_pct']:.0f}% still fossil)."
     )
 
 
 def main() -> int:
     engine = get_engine()
-    snapshot, trend = load_facts(engine)
+    snapshot, board = load_facts(engine)
     print(f"[ai] backend={BACKEND}  countries={len(snapshot)}")
 
     rows, md = [], [
-        "# Energy briefings by country",
+        "# Decarbonisation narratives by country",
         f"_Backend: `{BACKEND}` · generated {dt.date.today()}_",
         "",
     ]
     for _, r in snapshot.iterrows():
-        ctx = build_context(r, trend)
+        ctx = build_context(r, board)
         text = summarise(ctx)
         rows.append({
             "country": ctx["country"], "snapshot_year": ctx["year"],
@@ -171,8 +194,11 @@ def main() -> int:
         md += [f"### {ctx['country']}", text, ""]
         print(f"[ai]   {ctx['country']}")
 
+    # drop-then-append: to_sql("replace") reflects the table, which fails on
+    # DuckDB re-runs (Postgres-only catalog). See load_energy_data.load().
     with engine.begin() as conn:
-        pd.DataFrame(rows).to_sql("ai_country_briefings", conn, if_exists="replace", index=False)
+        conn.exec_driver_sql('DROP TABLE IF EXISTS ai_country_briefings')
+        pd.DataFrame(rows).to_sql("ai_country_briefings", conn, if_exists="append", index=False)
     print(f"[ai] wrote {len(rows)} rows to 'ai_country_briefings'")
 
     os.makedirs("ai_output", exist_ok=True)

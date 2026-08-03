@@ -62,8 +62,12 @@ def extract() -> pd.DataFrame:
 
 
 def load(df: pd.DataFrame, engine) -> None:
+    # Drop-then-append instead of to_sql(if_exists="replace"): "replace" reflects
+    # the existing table, and on DuckDB that reflection hits a Postgres-only
+    # catalog and fails on re-runs. An explicit DROP avoids it and is portable.
     with engine.begin() as conn:
-        df.to_sql(RAW_TABLE, conn, if_exists="replace", index=False)
+        conn.exec_driver_sql(f'DROP TABLE IF EXISTS {RAW_TABLE}')
+        df.to_sql(RAW_TABLE, conn, if_exists="append", index=False)
     with engine.connect() as conn:
         n = conn.execute(text(f"SELECT count(*) FROM {RAW_TABLE}")).scalar()
     print(f"[ingest] loaded {n:,} rows into '{RAW_TABLE}'")
