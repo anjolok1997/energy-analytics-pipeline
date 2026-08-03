@@ -9,11 +9,12 @@ dashboard can show a plain-English read next to the numbers.
 The leaderboard (a tested dbt model) does the analysis -- rank each country by how
 much its renewables share grew since 2000. This step just phrases that result.
 
-AI_BACKEND picks the generator:
-    local     flan-t5 via transformers, runs offline on CPU (default)
+AI_BACKEND picks the generator. The default is a plain template (no model) -- the
+LLM backends are optional, opt in with AI_BACKEND:
+    template  no model, formats the facts (default; what CI and the sample use)
+    local     flan-t5 via transformers, runs offline on CPU
     hf        Hugging Face inference API (needs HF_TOKEN)
     claude    Anthropic API (needs ANTHROPIC_API_KEY)
-    template  no model, just phrases the facts; used in CI and for the sample
 """
 from __future__ import annotations
 
@@ -23,8 +24,8 @@ import os
 import pandas as pd
 from sqlalchemy import create_engine
 
-TOP_N = int(os.environ.get("AI_TOP_N", "8"))
-BACKEND = os.environ.get("AI_BACKEND", "local").lower()
+TOP_N = int(os.environ.get("AI_TOP_N", "20"))
+BACKEND = os.environ.get("AI_BACKEND", "template").lower()
 OUTPUT_MD = "ai_output/sample_briefings.md"
 
 

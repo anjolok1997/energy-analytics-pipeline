@@ -22,7 +22,7 @@ The interactive Metabase version is described under [Dashboards](#dashboards)._
 flowchart LR
     A[OWID energy CSV] -->|python ingest| B[(DuckDB / Postgres)]
     B -->|dbt: staging + marts + tests| C[analytics tables]
-    C -->|local model| D[ai_country_briefings]
+    C -->|briefing step| D[ai_country_briefings]
     C --> E[Metabase]
     D --> E
     F[GitHub Actions: CI + on-demand refresh] -.-> A
@@ -33,7 +33,8 @@ flowchart LR
 - Python (pandas, SQLAlchemy) for ingestion
 - DuckDB for local dev, Postgres for the deployed warehouse
 - dbt for modelling and tests
-- transformers (local flan-t5) for the enrichment step, swappable to HF or Claude
+- a briefing step that turns the numbers into text — templated by default, with an
+  optional LLM backend (local flan-t5, HF, or Claude) you can switch on
 - GitHub Actions for CI and an on-demand refresh
 - Metabase for the dashboards
 
@@ -55,9 +56,10 @@ python ingest/ai_enrich.py                        # briefings -> warehouse + mar
 
 Or `make pipeline`. That leaves a `warehouse.duckdb` with the full model graph.
 
-The first `ai_enrich.py` run downloads a small flan-t5 model (~250MB, cached
-after). Set `LOCAL_MODEL=google/flan-t5-small` for less memory, or
-`AI_BACKEND=template` to skip the model entirely.
+By default the briefing step uses no model — it just formats the numbers. To try
+the optional local LLM instead, run with `AI_BACKEND=local` (the first run
+downloads a small flan-t5 model, ~250MB, cached after; `LOCAL_MODEL=google/flan-t5-small`
+uses less memory).
 
 ## Run it with Postgres + Metabase
 
@@ -109,17 +111,21 @@ upstream actually updates. `ci.yml` runs the pipeline on every push and fails if
 any test fails. `orchestration/energy_orchestration/definitions.py` is the same
 pipeline expressed as Dagster assets, for reference.
 
-## Enrichment backends
+## Briefing step
 
 `ingest/ai_enrich.py` reads the leaderboard and snapshot marts and writes one short
 briefing per country back to the warehouse — its rank and how its renewables share
 moved since 2000, in a sentence. The numbers come from the dbt model; this just
-turns them into text. `AI_BACKEND`:
+turns them into text.
 
-- `local` — flan-t5 via transformers, offline, no cost (default)
+It runs on a plain template by default (no model, deterministic — this is what CI
+and the committed sample use). The LLM backends are optional; set `AI_BACKEND` to
+switch:
+
+- `template` — no model, formats the facts (default)
+- `local` — flan-t5 via transformers, offline, no cost
 - `hf` — Hugging Face inference API (`HF_TOKEN`)
 - `claude` — Anthropic API (`ANTHROPIC_API_KEY`)
-- `template` — no model, formats the facts; used in CI and for the committed sample
 
 ## Layout
 
