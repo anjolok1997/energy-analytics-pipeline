@@ -84,11 +84,19 @@ for the quick-start.
 
 `build_dashboard.py` provisions two dashboards through the Metabase API:
 
-- **Global electricity & the shift to renewables** — who's decarbonising fastest
-  (the leaderboard), the biggest electricity consumers, renewables share over time,
-  and the per-country briefings.
-- **Country deep-dive** — pick a country from a dropdown to see its plain-English
-  read, its renewables-vs-fossil transition over time, and its leaderboard rank.
+**Global electricity & the shift to renewables** — who's decarbonising fastest
+(the leaderboard), the biggest electricity consumers, renewables share over time,
+and the per-country briefings.
+
+![Overview dashboard in Metabase](dashboard/screenshots/overview.png)
+
+**Country deep-dive** — pick a country from a dropdown to see its plain-English
+read, its renewables-vs-fossil transition over time, and its leaderboard rank.
+
+![Country deep-dive dashboard in Metabase](dashboard/screenshots/country-deep-dive.png)
+
+_These are screenshots of the live Metabase dashboards this repo builds (run
+`make dashboard` to get the interactive version locally)._
 
 ## Tests
 
