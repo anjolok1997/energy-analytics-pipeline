@@ -50,7 +50,7 @@ DEFAULT_COUNTRY = "Germany"
 
 REQUIRED_TABLES = {
     "mart_latest_snapshot", "mart_renewables_transition",
-    "mart_decarbonization_leaderboard", "ai_country_briefings",
+    "mart_decarbonization_leaderboard", "country_briefings",
 }
 
 
@@ -198,7 +198,7 @@ def build_overview(session, db_id):
     cards.append({"id": make_card(
         session, db_id, "Country narratives",
         f"""select country, briefing
-            from {PUBLIC}.ai_country_briefings
+            from {PUBLIC}.country_briefings
             order by snapshot_year desc, country""",
         "table",
     ), "row": 8, "col": 12, "size_x": 12, "size_y": 8})
@@ -227,10 +227,10 @@ def build_country_detail(session, db_id, fmap):
     cards.append({"card_id": make_card(
         session, db_id, "Where this country stands",
         f"""select briefing
-            from {PUBLIC}.ai_country_briefings
+            from {PUBLIC}.country_briefings
             where 1=1 [[ and {{{{country}}}} ]]""",
         "table",
-        template_tags=country_tag(fmap[(PUBLIC, "ai_country_briefings", "country")]),
+        template_tags=country_tag(fmap[(PUBLIC, "country_briefings", "country")]),
     ), "row": 0, "col": 0, "size_x": 24, "size_y": 3})
 
     cards.append({"card_id": make_card(

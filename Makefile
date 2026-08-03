@@ -1,14 +1,14 @@
 # Convenience commands. Run `make help` to list them.
 # Local dev uses DuckDB (no Docker). `make deploy-*` targets use Postgres.
 
-.PHONY: help install ingest transform enrich hero pipeline dashboard-up dashboard-down dashboard-build dashboard clean
+.PHONY: help install ingest transform briefings hero pipeline dashboard-up dashboard-down dashboard-build dashboard clean
 
 help:
 	@echo "install          Install Python dependencies"
-	@echo "pipeline         Run the full local pipeline (ingest -> dbt -> AI) on DuckDB"
+	@echo "pipeline         Run the full local pipeline (ingest -> dbt -> briefings -> hero) on DuckDB"
 	@echo "ingest           Load the OWID dataset into the warehouse"
 	@echo "transform        Run dbt build (models + tests)"
-	@echo "enrich           Run the AI enrichment step"
+	@echo "briefings        Write the per-country briefing text"
 	@echo "hero             Render the leaderboard hero chart (PNG the README embeds)"
 	@echo "dashboard-up     Start Postgres + Metabase (docker compose)"
 	@echo "dashboard-down   Stop Postgres + Metabase"
@@ -25,14 +25,14 @@ ingest:
 transform:
 	cd dbt && dbt build --profiles-dir .
 
-enrich:
-	python ingest/ai_enrich.py
+briefings:
+	python ingest/briefings.py
 
 hero:
 	python dashboard/hero_chart.py
 
 # One command, full local run.
-pipeline: ingest transform enrich hero
+pipeline: ingest transform briefings hero
 	@echo "Pipeline complete. Warehouse: warehouse.duckdb"
 
 dashboard-up:
@@ -53,7 +53,7 @@ dashboard: dashboard-up
 	       pg_isready -h localhost -U energy >/dev/null 2>&1; do sleep 2; done
 	python ingest/load_energy_data.py
 	cd dbt && dbt build --profiles-dir . --target prod && cd ..
-	python ingest/ai_enrich.py
+	python ingest/briefings.py
 	python dashboard/hero_chart.py
 	python dashboard/build_dashboard.py
 

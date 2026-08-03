@@ -24,8 +24,8 @@ jobs:
 
       - name: Run pipeline
         env:
-          AI_BACKEND: template
+          BRIEFING_BACKEND: template
         run: |
           python ingest/load_energy_data.py
           cd dbt && dbt build --profiles-dir . && cd ..
-          python ingest/ai_enrich.py
+          python ingest/briefings.py

@@ -22,7 +22,7 @@ The interactive Metabase version is described under [Dashboards](#dashboards)._
 flowchart LR
     A[OWID energy CSV] -->|python ingest| B[(DuckDB / Postgres)]
     B -->|dbt: staging + marts + tests| C[analytics tables]
-    C -->|briefing step| D[ai_country_briefings]
+    C -->|briefing step| D[country_briefings]
     C --> E[Metabase]
     D --> E
     F[GitHub Actions: CI + on-demand refresh] -.-> A
@@ -51,13 +51,13 @@ pip install -r requirements.txt
 
 python ingest/load_energy_data.py                 # extract + load
 cd dbt && dbt build --profiles-dir . && cd ..     # transform + test
-python ingest/ai_enrich.py                        # briefings -> warehouse + markdown
+python ingest/briefings.py                        # briefings -> warehouse + markdown
 ```
 
 Or `make pipeline`. That leaves a `warehouse.duckdb` with the full model graph.
 
 By default the briefing step uses no model — it just formats the numbers. To try
-the optional local LLM instead, run with `AI_BACKEND=local` (the first run
+the optional local LLM instead, run with `BRIEFING_BACKEND=local` (the first run
 downloads a small flan-t5 model, ~250MB, cached after; `LOCAL_MODEL=google/flan-t5-small`
 uses less memory).
 
@@ -70,7 +70,7 @@ export $(grep -v '^#' .env | xargs)
 
 python ingest/load_energy_data.py
 cd dbt && dbt build --profiles-dir . --target prod && cd ..
-python ingest/ai_enrich.py
+python ingest/briefings.py
 ```
 
 Open http://localhost:3000, add the `energy` Postgres database (models are in the
@@ -113,13 +113,13 @@ pipeline expressed as Dagster assets, for reference.
 
 ## Briefing step
 
-`ingest/ai_enrich.py` reads the leaderboard and snapshot marts and writes one short
+`ingest/briefings.py` reads the leaderboard and snapshot marts and writes one short
 briefing per country back to the warehouse — its rank and how its renewables share
 moved since 2000, in a sentence. The numbers come from the dbt model; this just
 turns them into text.
 
 It runs on a plain template by default (no model, deterministic — this is what CI
-and the committed sample use). The LLM backends are optional; set `AI_BACKEND` to
+and the committed sample use). The LLM backends are optional; set `BRIEFING_BACKEND` to
 switch:
 
 - `template` — no model, formats the facts (default)
@@ -130,7 +130,7 @@ switch:
 ## Layout
 
 ```
-ingest/          load_energy_data.py, ai_enrich.py
+ingest/          load_energy_data.py, briefings.py
 dbt/models/      staging/ + marts/ (dim_country, fct_country_energy, 3 marts)
 dashboard/       build_dashboard.py (Metabase API), hero_chart.py (PNG)
 orchestration/   Dagster reference (not deployed)

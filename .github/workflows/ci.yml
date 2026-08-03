@@ -32,5 +32,5 @@ jobs:
 
       - name: Enrich (template backend, no model download)
         env:
-          AI_BACKEND: template
-        run: python ingest/ai_enrich.py
+          BRIEFING_BACKEND: template
+        run: python ingest/briefings.py

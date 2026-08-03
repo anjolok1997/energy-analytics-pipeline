@@ -67,12 +67,12 @@ All optional — defaults match the local `docker-compose` stack:
 | Who's decarbonising fastest | bar | `mart_decarbonization_leaderboard` |
 | Biggest electricity consumers | bar | `mart_latest_snapshot` |
 | Renewables share over time | line | `mart_renewables_transition` |
-| Country narratives | table | `ai_country_briefings` |
+| Country narratives | table | `country_briefings` |
 
 **Country deep-dive** (driven by a `Country` dropdown parameter)
 
 | Tile | Type | Source |
 |---|---|---|
-| Where this country stands | table | `ai_country_briefings` |
+| Where this country stands | table | `country_briefings` |
 | Renewables vs fossil over time | line | `mart_renewables_transition` |
 | Decarbonisation rank & change | table | `mart_decarbonization_leaderboard` |

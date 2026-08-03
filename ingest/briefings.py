@@ -1,16 +1,16 @@
 """
 Write a short natural-language narrative per country that reports its result on
 the decarbonisation leaderboard (mart_decarbonization_leaderboard) alongside its
-latest snapshot, and store it back in the warehouse (ai_country_briefings) so the
+latest snapshot, and store it back in the warehouse (country_briefings) so the
 dashboard can show a plain-English read next to the numbers.
 
-    marts -> narrative -> ai_country_briefings + ai_output/sample_briefings.md
+    marts -> narrative -> country_briefings + briefings_output/sample_briefings.md
 
 The leaderboard (a tested dbt model) does the analysis -- rank each country by how
 much its renewables share grew since 2000. This step just phrases that result.
 
-AI_BACKEND picks the generator. The default is a plain template (no model) -- the
-LLM backends are optional, opt in with AI_BACKEND:
+BRIEFING_BACKEND picks the generator. The default is a plain template (no model) --
+the LLM backends are optional, opt in with BRIEFING_BACKEND:
     template  no model, formats the facts (default; what CI and the sample use)
     local     flan-t5 via transformers, runs offline on CPU
     hf        Hugging Face inference API (needs HF_TOKEN)
@@ -24,9 +24,9 @@ import os
 import pandas as pd
 from sqlalchemy import create_engine
 
-TOP_N = int(os.environ.get("AI_TOP_N", "20"))
-BACKEND = os.environ.get("AI_BACKEND", "template").lower()
-OUTPUT_MD = "ai_output/sample_briefings.md"
+TOP_N = int(os.environ.get("BRIEFING_TOP_N", "20"))
+BACKEND = os.environ.get("BRIEFING_BACKEND", "template").lower()
+OUTPUT_MD = "briefings_output/sample_briefings.md"
 
 
 def get_engine():
@@ -177,7 +177,7 @@ def _template(ctx: dict) -> str:
 def main() -> int:
     engine = get_engine()
     snapshot, board = load_facts(engine)
-    print(f"[ai] backend={BACKEND}  countries={len(snapshot)}")
+    print(f"[brief] backend={BACKEND}  countries={len(snapshot)}")
 
     rows, md = [], [
         "# Decarbonisation narratives by country",
@@ -193,19 +193,19 @@ def main() -> int:
             "generated_at": dt.datetime.now(dt.timezone.utc),
         })
         md += [f"### {ctx['country']}", text, ""]
-        print(f"[ai]   {ctx['country']}")
+        print(f"[brief]   {ctx['country']}")
 
     # drop-then-append: to_sql("replace") reflects the table, which fails on
     # DuckDB re-runs (Postgres-only catalog). See load_energy_data.load().
     with engine.begin() as conn:
-        conn.exec_driver_sql('DROP TABLE IF EXISTS ai_country_briefings')
-        pd.DataFrame(rows).to_sql("ai_country_briefings", conn, if_exists="append", index=False)
-    print(f"[ai] wrote {len(rows)} rows to 'ai_country_briefings'")
+        conn.exec_driver_sql('DROP TABLE IF EXISTS country_briefings')
+        pd.DataFrame(rows).to_sql("country_briefings", conn, if_exists="append", index=False)
+    print(f"[brief] wrote {len(rows)} rows to 'country_briefings'")
 
-    os.makedirs("ai_output", exist_ok=True)
+    os.makedirs("briefings_output", exist_ok=True)
     with open(OUTPUT_MD, "w") as f:
         f.write("\n".join(md))
-    print(f"[ai] wrote {OUTPUT_MD}")
+    print(f"[brief] wrote {OUTPUT_MD}")
     return 0
 
 
