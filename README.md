@@ -24,7 +24,7 @@ flowchart LR
     C -->|local model| D[ai_country_briefings]
     C --> E[Metabase]
     D --> E
-    F[GitHub Actions: CI + weekly cron] -.-> A
+    F[GitHub Actions: CI + on-demand refresh] -.-> A
 ```
 
 ## Stack
@@ -100,12 +100,13 @@ rows with a 3-letter ISO code.
 
 ## Orchestration
 
-`.github/workflows/scheduled_refresh.yml` re-runs the pipeline every Monday on the
-free tier. In practice the OWID source updates infrequently (roughly annually), so
-the weekly cron rarely changes the numbers — it's here to show the refresh wiring,
-not because the data needs it that often. `ci.yml` runs the pipeline on every push
-and fails if any test fails. `orchestration/energy_orchestration/definitions.py` is
-the same pipeline expressed as Dagster assets, for reference.
+`.github/workflows/scheduled_refresh.yml` re-runs the whole pipeline on demand
+(`workflow_dispatch` — the "Run workflow" button in the Actions tab). There's no
+cron: the OWID source only publishes a new release roughly once a year, so a
+scheduled refresh would almost always be a no-op — you kick it off manually when
+upstream actually updates. `ci.yml` runs the pipeline on every push and fails if
+any test fails. `orchestration/energy_orchestration/definitions.py` is the same
+pipeline expressed as Dagster assets, for reference.
 
 ## Enrichment backends
 

@@ -1,11 +1,10 @@
-# Re-run the pipeline weekly on a cron (and on demand). Runs on the free tier,
-# so the data stays current without a hosted orchestrator.
+# Re-run the whole pipeline on demand. The OWID source only refreshes ~annually,
+# so there's no cron here — kick it off manually from the Actions tab when the
+# upstream dataset publishes a new release.
 
-name: scheduled-refresh
+name: refresh
 
 on:
-  schedule:
-    - cron: "0 6 * * 1"      # 06:00 UTC Mondays
   workflow_dispatch:
 
 jobs:
