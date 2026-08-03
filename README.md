@@ -5,15 +5,16 @@ and test with dbt, add a text-enrichment step, and serve it to a Metabase dashbo
 Runs locally on DuckDB with no setup, or on Postgres + Metabase via Docker.
 
 Data is [Our World in Data's energy dataset](https://github.com/owid/energy-data)
-(country × year electricity and energy metrics). The headline question it answers:
-**which countries have shifted to renewables the fastest since 2000?** A tested dbt
-model ranks them, and everything downstream — the hero chart, the dashboards, the
-per-country briefings — is built off that one leaderboard.
+(country × year electricity and energy metrics). The main question it answers is
+which countries have moved to renewables the fastest since 2000. A dbt model ranks
+them; the chart below, the Metabase dashboards, and the per-country briefings all
+read from that model.
 
-![Who's winning the shift to renewables](dashboard/decarbonization_leaderboard.png)
+![Renewables' share of energy, 2000 vs latest, top 15 countries](dashboard/decarbonization_leaderboard.png)
 
-_Rendered by `dashboard/hero_chart.py` straight from the `mart_decarbonization_leaderboard`
-model, so it stays in sync with the data._
+_This is a matplotlib chart written by `dashboard/hero_chart.py` — not a Metabase
+screenshot. It's committed so the result shows on GitHub without running anything.
+The interactive Metabase version is described under [Dashboards](#dashboards)._
 
 ## Architecture
 
@@ -33,8 +34,8 @@ flowchart LR
 - DuckDB for local dev, Postgres for the deployed warehouse
 - dbt for modelling and tests
 - transformers (local flan-t5) for the enrichment step, swappable to HF or Claude
-- GitHub Actions for CI and a scheduled refresh
-- Metabase for the dashboard
+- GitHub Actions for CI and an on-demand refresh
+- Metabase for the dashboards
 
 The dbt models are plain SQL and run unchanged on DuckDB, Postgres or BigQuery
 (BigQuery is just another target in `profiles.yml`). There's also a Dagster
@@ -110,11 +111,10 @@ pipeline expressed as Dagster assets, for reference.
 
 ## Enrichment backends
 
-`ingest/ai_enrich.py` reads the leaderboard + snapshot marts and writes a short,
-plain-English briefing per country back into the warehouse — each one narrating
-that country's leaderboard result (its rank and how its renewables share moved
-since 2000). The analysis lives in the tested dbt model; this step just phrases it.
-`AI_BACKEND`:
+`ingest/ai_enrich.py` reads the leaderboard and snapshot marts and writes one short
+briefing per country back to the warehouse — its rank and how its renewables share
+moved since 2000, in a sentence. The numbers come from the dbt model; this just
+turns them into text. `AI_BACKEND`:
 
 - `local` — flan-t5 via transformers, offline, no cost (default)
 - `hf` — Hugging Face inference API (`HF_TOKEN`)
